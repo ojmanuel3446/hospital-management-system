@@ -1,5 +1,6 @@
 import streamlit as st
 import bcrypt
+import re
 
 from config.database import Database
 
@@ -70,21 +71,6 @@ class ProfilePage:
         full_name = (
             f"{first_name} {last_name}"
         ).strip()
-
-       
-        
-        '''
-        if role == "doctor":
-            icon = "👨‍⚕️"
-        elif role == "patient":
-            icon = "🧑‍⚕️"
-        else:
-            icon = "👤"
-        
-        st.markdown(
-            f"# {icon} {full_name}"
-        )
-         '''
 
         st.markdown(
             f"{full_name}"
@@ -204,7 +190,7 @@ class ProfilePage:
 
         st.info(
             "You can update your phone number. "
-            "Other professional information is managed by the administrator."
+            "Only numbers are allowed."
         )
 
         with st.form(
@@ -228,9 +214,29 @@ class ProfilePage:
 
         if submitted:
 
+            phone = phone.strip()
+
+            # ==============================================
+            # PHONE VALIDATION
+            # ==============================================
+
+            valid, message = self.validate_phone(
+                phone
+            )
+
+            if not valid:
+
+                st.error(message)
+
+                return
+
+            # ==============================================
+            # UPDATE DOCTOR
+            # ==============================================
+
             success, error = self.update_doctor_phone(
                 profile_id,
-                phone.strip()
+                phone
             )
 
             if error:
@@ -341,10 +347,43 @@ class ProfilePage:
 
         if submitted:
 
+            phone = phone.strip()
+            address = address.strip()
+
+            # ==============================================
+            # PHONE VALIDATION
+            # ==============================================
+
+            valid, message = self.validate_phone(
+                phone
+            )
+
+            if not valid:
+
+                st.error(message)
+
+                return
+
+            # ==============================================
+            # ADDRESS VALIDATION
+            # ==============================================
+
+            if not address:
+
+                st.error(
+                    "Please enter your address."
+                )
+
+                return
+
+            # ==============================================
+            # UPDATE PATIENT
+            # ==============================================
+
             success, error = self.update_patient_contact(
                 profile_id,
-                phone.strip(),
-                address.strip()
+                phone,
+                address
             )
 
             if error:
@@ -360,6 +399,64 @@ class ProfilePage:
                 )
 
                 st.rerun()
+
+    # ======================================================
+    # PHONE VALIDATION
+    # ======================================================
+
+    def validate_phone(
+        self,
+        phone
+    ):
+
+        # Remove leading/trailing spaces
+        phone = phone.strip()
+
+        # ==================================================
+        # EMPTY
+        # ==================================================
+
+        if not phone:
+
+            return False, (
+                "Please enter your phone number."
+            )
+
+        # ==================================================
+        # NUMBERS ONLY
+        # ==================================================
+
+        if not re.fullmatch(
+            r"[0-9]+",
+            phone
+        ):
+
+            return False, (
+                "Phone number must contain numbers only. "
+                "Do not use letters, spaces, dashes, or symbols."
+            )
+
+        # ==================================================
+        # MINIMUM LENGTH
+        # ==================================================
+
+        if len(phone) < 10:
+
+            return False, (
+                "Phone number must contain at least 10 digits."
+            )
+
+        # ==================================================
+        # MAXIMUM LENGTH
+        # ==================================================
+
+        if len(phone) > 15:
+
+            return False, (
+                "Phone number must not exceed 15 digits."
+            )
+
+        return True, None
 
     # ======================================================
     # GET PROFILE
@@ -405,17 +502,6 @@ class ProfilePage:
 
             # ==================================================
             # DOCTOR
-            #
-            # IMPORTANT:
-            # The doctors table contains:
-            #
-            # doctor_id
-            # profile_id
-            # specialization
-            # contact_info
-            # created_at
-            #
-            # There is NO doctors.phone.
             # ==================================================
 
             if role == "doctor":

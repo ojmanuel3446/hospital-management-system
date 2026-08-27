@@ -1,4 +1,6 @@
 import datetime
+import re
+
 import streamlit as st
 
 from models.patient import Patient
@@ -39,14 +41,16 @@ class PatientsPage:
     def notification_modal(self, message):
 
         st.markdown(
-            f"""<div style="
-text-align: center;
-padding: 20px 10px;
-font-size: 20px;
-font-weight: 500;
-">
-{message}
-</div>""",
+            f"""
+            <div style="
+                text-align: center;
+                padding: 20px 10px;
+                font-size: 20px;
+                font-weight: 500;
+            ">
+                {message}
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
@@ -83,49 +87,157 @@ font-weight: 500;
 
         st.subheader("Create New Patient")
 
+        # ==================================================
+        # CURRENT DATE
+        # ==================================================
+
+        today = datetime.date.today()
+        current_year = today.year
+        minimum_year = current_year - 100
+
+        # ==================================================
+        # FORM
+        # ==================================================
+
         with st.form(
             "patient_add_form",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
 
-            st.markdown("### Personal Information")
+            st.markdown(
+                "### Personal Information"
+            )
 
             col1, col2 = st.columns(2)
+
+            # ==================================================
+            # LEFT COLUMN
+            # ==================================================
 
             with col1:
 
                 first_name = st.text_input(
-                    "First Name"
+                    "First Name",
+                    key="patient_add_first_name"
                 )
 
                 email = st.text_input(
-                    "Email"
+                    "Email",
+                    key="patient_add_email"
                 )
 
-                date_of_birth = st.date_input(
-                    "Date of Birth"
-                )
+            # ==================================================
+            # RIGHT COLUMN
+            # ==================================================
 
             with col2:
 
                 last_name = st.text_input(
-                    "Last Name"
+                    "Last Name",
+                    key="patient_add_last_name"
                 )
 
                 password = st.text_input(
                     "Password",
-                    type="password"
+                    type="password",
+                    key="patient_add_password"
                 )
 
-                phone = st.text_input(
-                    "Phone"
+            # ==================================================
+            # DATE OF BIRTH
+            # ==================================================
+
+            st.markdown(
+                "#### Date of Birth"
+            )
+
+            dob_col1, dob_col2, dob_col3 = st.columns(3)
+
+            # ==================================================
+            # BIRTH MONTH
+            # ==================================================
+
+            with dob_col1:
+
+                birth_month = st.selectbox(
+                    "Birth Month",
+                    options=list(range(1, 13)),
+                    format_func=lambda month: (
+                        datetime.date(
+                            2000,
+                            month,
+                            1
+                        ).strftime("%B")
+                    ),
+                    key="patient_add_birth_month"
                 )
 
-            st.markdown("### Patient Information")
+            # ==================================================
+            # BIRTH DAY
+            # ==================================================
+
+            with dob_col2:
+
+                if birth_month == 2:
+                    max_day = 29
+
+                elif birth_month in [4, 6, 9, 11]:
+                    max_day = 30
+
+                else:
+                    max_day = 31
+
+                birth_day = st.selectbox(
+                    "Birth Day",
+                    options=list(
+                        range(
+                            1,
+                            max_day + 1
+                        )
+                    ),
+                    key="patient_add_birth_day"
+                )
+
+            # ==================================================
+            # BIRTH YEAR
+            # ==================================================
+
+            with dob_col3:
+
+                birth_year = st.selectbox(
+                    "Birth Year",
+                    options=list(
+                        range(
+                            current_year,
+                            minimum_year - 1,
+                            -1
+                        )
+                    ),
+                    key="patient_add_birth_year"
+                )
+
+            # ==================================================
+            # PHONE
+            # ==================================================
+
+            phone = st.text_input(
+                "Phone",
+                placeholder="Enter numbers only",
+                key="patient_add_phone"
+            )
+
+            # ==================================================
+            # ADDRESS
+            # ==================================================
 
             address = st.text_area(
-                "Address"
+                "Address",
+                key="patient_add_address"
             )
+
+            # ==================================================
+            # MEDICAL HISTORY
+            # ==================================================
 
             medical_history = st.text_area(
                 "Medical History",
@@ -133,8 +245,13 @@ font-weight: 500;
                     "Enter relevant medical history, "
                     "previous illnesses, allergies, "
                     "surgeries, etc."
-                )
+                ),
+                key="patient_add_medical_history"
             )
+
+            # ==================================================
+            # SUBMIT
+            # ==================================================
 
             submitted = st.form_submit_button(
                 "Create Patient",
@@ -142,60 +259,203 @@ font-weight: 500;
                 use_container_width=True
             )
 
+        # ==================================================
+        # WAIT FOR SUBMISSION
+        # ==================================================
+
         if not submitted:
             return
 
         # ==================================================
-        # VALIDATION
+        # NORMALIZE EMAIL
+        # ==================================================
+
+        normalized_email = email.strip().lower()
+
+        # ==================================================
+        # VALIDATION - FIRST NAME
         # ==================================================
 
         if not first_name.strip():
-            st.error("First name is required.")
-            return
 
-        if not last_name.strip():
-            st.error("Last name is required.")
-            return
+            st.error(
+                "First name is required."
+            )
 
-        if not email.strip():
-            st.error("Email is required.")
-            return
-
-        if not password:
-            st.error("Password is required.")
             return
 
         # ==================================================
-        # CREATE PATIENT
+        # VALIDATION - LAST NAME
+        # ==================================================
+
+        if not last_name.strip():
+
+            st.error(
+                "Last name is required."
+            )
+
+            return
+
+        # ==================================================
+        # VALIDATION - EMAIL
+        # ==================================================
+
+        if not normalized_email:
+
+            st.error(
+                "Email is required."
+            )
+
+            return
+
+        # ==================================================
+        # EMAIL FORMAT
+        # ==================================================
+
+        if (
+            "@" not in normalized_email
+            or "." not in normalized_email.split("@")[-1]
+        ):
+
+            st.error(
+                "Please enter a valid email address."
+            )
+
+            return
+
+        # ==================================================
+        # VALIDATION - PASSWORD
+        # ==================================================
+
+        if not password:
+
+            st.error(
+                "Password is required."
+            )
+
+            return
+
+        # ==================================================
+        # PHONE VALIDATION
+        # ==================================================
+
+        phone = phone.strip()
+
+        if not phone:
+
+            st.error(
+                "Phone number is required."
+            )
+
+            return
+
+        # Numbers only
+        if not re.fullmatch(r"\d+", phone):
+
+            st.error(
+                "Phone number must contain numbers only."
+            )
+
+            return
+
+        # ==================================================
+        # VALIDATE DATE OF BIRTH
+        # ==================================================
+
+        try:
+
+            date_of_birth = datetime.date(
+                birth_year,
+                birth_month,
+                birth_day
+            )
+
+        except ValueError:
+
+            st.error(
+                "Please select a valid date of birth."
+            )
+
+            return
+
+        # ==================================================
+        # PREVENT FUTURE DATE
+        # ==================================================
+
+        if date_of_birth > today:
+
+            st.error(
+                "Date of birth cannot be in the future."
+            )
+
+            return
+
+        # ==================================================
+        # CREATE PATIENT OBJECT
         # ==================================================
 
         patient = Patient(
             first_name=first_name.strip(),
             last_name=last_name.strip(),
-            email=email.strip(),
+            email=normalized_email,
             password_hash=password,
             address=address.strip(),
-            phone=phone.strip(),
+            phone=phone,
             date_of_birth=date_of_birth,
             medical_history=medical_history.strip()
         )
 
-        created_patient, error = self.service.create(
-            patient
+        # ==================================================
+        # DATABASE
+        # ==================================================
+
+        created_patient, error = (
+            self.service.create(patient)
         )
+
+        # ==================================================
+        # DATABASE ERROR
+        # ==================================================
 
         if error:
 
-            st.error(
-                f"Unable to add patient:\n\n{error}"
-            )
+            error_text = str(error).lower()
+
+            if (
+                "duplicate" in error_text
+                or "unique" in error_text
+                or "profiles_email_key" in error_text
+                or "email" in error_text
+            ):
+
+                st.error(
+                    "This email address is already taken. "
+                    "Please enter a different email address."
+                )
+
+            else:
+
+                st.error(
+                    f"Unable to add patient:\n\n{error}"
+                )
+
+            # IMPORTANT:
+            # DO NOT CLEAR FORM WHEN DATABASE CREATION FAILS
 
             return
+
+        # ==================================================
+        # SUCCESS NAME
+        # ==================================================
 
         full_name = (
             f"{first_name.strip()} "
             f"{last_name.strip()}"
         )
+
+        # ==================================================
+        # SUCCESS NOTIFICATION
+        # ==================================================
 
         st.session_state[
             "patient_notification"
@@ -203,6 +463,33 @@ font-weight: 500;
             f"Patient <strong>{full_name}</strong> "
             f"has been added successfully."
         )
+
+        # ==================================================
+        # CLEAR ADD FORM
+        #
+        # IMPORTANT:
+        # We remove the widget keys only AFTER success.
+        # We do NOT assign values to them while the widgets
+        # are still instantiated.
+        # ==================================================
+
+        for key in [
+            "patient_add_first_name",
+            "patient_add_last_name",
+            "patient_add_email",
+            "patient_add_password",
+            "patient_add_phone",
+            "patient_add_address",
+            "patient_add_medical_history",
+            "patient_add_birth_month",
+            "patient_add_birth_day",
+            "patient_add_birth_year"
+        ]:
+
+            st.session_state.pop(
+                key,
+                None
+            )
 
         st.rerun()
 
@@ -212,7 +499,9 @@ font-weight: 500;
 
     def show_patient_list(self):
 
-        patients, error = self.service.get_all()
+        patients, error = (
+            self.service.get_all()
+        )
 
         if error:
 
@@ -224,13 +513,18 @@ font-weight: 500;
 
         if not patients:
 
-            st.info("No patients found.")
+            st.info(
+                "No patients found."
+            )
 
             return
 
         for patient in patients:
 
-            profile = patient.get("profiles") or {}
+            profile = (
+                patient.get("profiles")
+                or {}
+            )
 
             first_name = profile.get(
                 "first_name",
@@ -246,7 +540,9 @@ font-weight: 500;
                 f"{first_name} {last_name}"
             ).strip()
 
-            col1, col2 = st.columns([7, 3])
+            col1, col2 = st.columns(
+                [7, 3]
+            )
 
             # ==================================================
             # PATIENT INFORMATION
@@ -255,7 +551,7 @@ font-weight: 500;
             with col1:
 
                 st.subheader(
-                    f"{full_name}"
+                    full_name
                 )
 
                 st.write(
@@ -294,6 +590,7 @@ font-weight: 500;
                     ),
                     use_container_width=True
                 ):
+
                     self.medical_record_modal(
                         patient
                     )
@@ -306,6 +603,7 @@ font-weight: 500;
                     ),
                     use_container_width=True
                 ):
+
                     self.edit_patient_modal(
                         patient
                     )
@@ -318,6 +616,7 @@ font-weight: 500;
                     ),
                     use_container_width=True
                 ):
+
                     self.delete_patient_modal(
                         patient
                     )
@@ -329,11 +628,10 @@ font-weight: 500;
     # ======================================================
 
     @st.dialog("Medical Record")
-    def medical_record_modal(self, patient):
-
-        # ==================================================
-        # LOAD MEDICAL RECORD
-        # ==================================================
+    def medical_record_modal(
+        self,
+        patient
+    ):
 
         patient_record, error = (
             self.service.get_medical_record(
@@ -385,7 +683,7 @@ font-weight: 500;
         # ==================================================
 
         st.subheader(
-            f"{full_name}"
+            full_name
         )
 
         st.write(
@@ -452,10 +750,6 @@ font-weight: 500;
             )
             or []
         )
-
-        # ==================================================
-        # NO APPOINTMENTS
-        # ==================================================
 
         if not appointments:
 
@@ -614,13 +908,13 @@ font-weight: 500;
             # ==================================================
 
             st.markdown(
-                f"""### {formatted_date}"""
+                f"### {formatted_date}"
             )
 
             if formatted_time:
 
                 st.caption(
-                    f"{formatted_time}"
+                    formatted_time
                 )
 
             col1, col2 = st.columns(2)
@@ -658,7 +952,7 @@ font-weight: 500;
             )
 
             # ==================================================
-            # DIAGNOSIS SECTION
+            # DIAGNOSIS
             # ==================================================
 
             st.markdown(
@@ -672,20 +966,12 @@ font-weight: 500;
                 or []
             )
 
-            # ==================================================
-            # NO DIAGNOSIS
-            # ==================================================
-
             if not diagnoses:
 
                 st.info(
                     "No diagnosis has been recorded "
                     "for this appointment."
                 )
-
-            # ==================================================
-            # DIAGNOSES
-            # ==================================================
 
             else:
 
@@ -709,7 +995,8 @@ font-weight: 500;
                     )
 
                     st.markdown(
-                        f"#### 🩺 Diagnosis {diagnosis_index}"
+                        f"#### 🩺 Diagnosis "
+                        f"{diagnosis_index}"
                     )
 
                     st.write(
@@ -722,13 +1009,11 @@ font-weight: 500;
                         f"{treatment_plan}"
                     )
 
-                    if diagnosis_index < len(diagnoses):
+                    if diagnosis_index < len(
+                        diagnoses
+                    ):
 
                         st.divider()
-
-            # ==================================================
-            # APPOINTMENT SEPARATOR
-            # ==================================================
 
             if index < len(appointments) - 1:
 
@@ -739,7 +1024,10 @@ font-weight: 500;
     # ======================================================
 
     @st.dialog("Edit Patient")
-    def edit_patient_modal(self, patient):
+    def edit_patient_modal(
+        self,
+        patient
+    ):
 
         profile = (
             patient.get("profiles")
@@ -749,6 +1037,10 @@ font-weight: 500;
         st.write(
             "Update the patient's information."
         )
+
+        # ==================================================
+        # EXISTING DATE
+        # ==================================================
 
         existing_date = (
             patient.get(
@@ -784,6 +1076,14 @@ font-weight: 500;
             )
 
         # ==================================================
+        # DATE RANGE
+        # ==================================================
+
+        today = datetime.date.today()
+        current_year = today.year
+        minimum_year = current_year - 100
+
+        # ==================================================
         # FORM
         # ==================================================
 
@@ -796,6 +1096,10 @@ font-weight: 500;
             )
 
             col1, col2 = st.columns(2)
+
+            # ==================================================
+            # LEFT COLUMN
+            # ==================================================
 
             with col1:
 
@@ -815,10 +1119,9 @@ font-weight: 500;
                     )
                 )
 
-                date_of_birth = st.date_input(
-                    "Date of Birth",
-                    value=existing_date
-                )
+            # ==================================================
+            # RIGHT COLUMN
+            # ==================================================
 
             with col2:
 
@@ -835,8 +1138,127 @@ font-weight: 500;
                     value=patient.get(
                         "phone",
                         ""
-                    ) or ""
+                    ) or "",
+                    placeholder="Enter numbers only"
                 )
+
+            # ==================================================
+            # DATE OF BIRTH
+            # ==================================================
+
+            st.markdown(
+                "#### Date of Birth"
+            )
+
+            dob_col1, dob_col2, dob_col3 = st.columns(3)
+
+            existing_month = (
+                existing_date.month
+            )
+
+            existing_day = (
+                existing_date.day
+            )
+
+            existing_year = (
+                existing_date.year
+            )
+
+            # ==================================================
+            # KEEP YEAR INSIDE 100-YEAR RANGE
+            # ==================================================
+
+            if existing_year > current_year:
+
+                existing_year = current_year
+
+            if existing_year < minimum_year:
+
+                existing_year = minimum_year
+
+            # ==================================================
+            # MONTH
+            # ==================================================
+
+            with dob_col1:
+
+                edit_birth_month = st.selectbox(
+                    "Birth Month",
+                    options=list(
+                        range(1, 13)
+                    ),
+                    index=existing_month - 1,
+                    format_func=lambda month: (
+                        datetime.date(
+                            2000,
+                            month,
+                            1
+                        ).strftime("%B")
+                    )
+                )
+
+            # ==================================================
+            # DAY
+            # ==================================================
+
+            with dob_col2:
+
+                if edit_birth_month == 2:
+
+                    max_day = 29
+
+                elif edit_birth_month in [
+                    4,
+                    6,
+                    9,
+                    11
+                ]:
+
+                    max_day = 30
+
+                else:
+
+                    max_day = 31
+
+                if existing_day > max_day:
+
+                    existing_day = max_day
+
+                edit_birth_day = st.selectbox(
+                    "Birth Day",
+                    options=list(
+                        range(
+                            1,
+                            max_day + 1
+                        )
+                    ),
+                    index=existing_day - 1
+                )
+
+            # ==================================================
+            # YEAR
+            # ==================================================
+
+            with dob_col3:
+
+                edit_birth_year = st.selectbox(
+                    "Birth Year",
+                    options=list(
+                        range(
+                            current_year,
+                            minimum_year - 1,
+                            -1
+                        )
+                    ),
+                    index=(
+                        current_year
+                        - existing_year
+                    )
+                )
+
+            # ==================================================
+            # ADDRESS
+            # ==================================================
 
             address = st.text_area(
                 "Address",
@@ -846,6 +1268,10 @@ font-weight: 500;
                 ) or ""
             )
 
+            # ==================================================
+            # MEDICAL HISTORY
+            # ==================================================
+
             medical_history = st.text_area(
                 "Medical History",
                 value=patient.get(
@@ -854,6 +1280,10 @@ font-weight: 500;
                 ) or ""
             )
 
+            # ==================================================
+            # SUBMIT
+            # ==================================================
+
             submitted = st.form_submit_button(
                 "Save Changes",
                 type="primary",
@@ -861,10 +1291,19 @@ font-weight: 500;
             )
 
         if not submitted:
+
             return
 
         # ==================================================
-        # VALIDATION
+        # NORMALIZE EMAIL
+        # ==================================================
+
+        normalized_email = (
+            email.strip().lower()
+        )
+
+        # ==================================================
+        # VALIDATION - FIRST NAME
         # ==================================================
 
         if not first_name.strip():
@@ -875,6 +1314,10 @@ font-weight: 500;
 
             return
 
+        # ==================================================
+        # VALIDATION - LAST NAME
+        # ==================================================
+
         if not last_name.strip():
 
             st.error(
@@ -883,10 +1326,83 @@ font-weight: 500;
 
             return
 
-        if not email.strip():
+        # ==================================================
+        # VALIDATION - EMAIL
+        # ==================================================
+
+        if not normalized_email:
 
             st.error(
                 "Email is required."
+            )
+
+            return
+
+        # ==================================================
+        # EMAIL FORMAT
+        # ==================================================
+
+        if (
+            "@" not in normalized_email
+            or "." not in normalized_email.split("@")[-1]
+        ):
+
+            st.error(
+                "Please enter a valid email address."
+            )
+
+            return
+
+        # ==================================================
+        # PHONE VALIDATION
+        # ==================================================
+
+        phone = phone.strip()
+
+        if not phone:
+
+            st.error(
+                "Phone number is required."
+            )
+
+            return
+
+        if not re.fullmatch(r"\d+", phone):
+
+            st.error(
+                "Phone number must contain numbers only."
+            )
+
+            return
+
+        # ==================================================
+        # VALIDATE DATE
+        # ==================================================
+
+        try:
+
+            date_of_birth = datetime.date(
+                edit_birth_year,
+                edit_birth_month,
+                edit_birth_day
+            )
+
+        except ValueError:
+
+            st.error(
+                "Please select a valid date of birth."
+            )
+
+            return
+
+        # ==================================================
+        # PREVENT FUTURE DATE
+        # ==================================================
+
+        if date_of_birth > today:
+
+            st.error(
+                "Date of birth cannot be in the future."
             )
 
             return
@@ -896,10 +1412,9 @@ font-weight: 500;
         # ==================================================
 
         profile_data = {
-
             "first_name": first_name.strip(),
             "last_name": last_name.strip(),
-            "email": email.strip()
+            "email": normalized_email
         }
 
         # ==================================================
@@ -910,13 +1425,15 @@ font-weight: 500;
 
             "address": address.strip(),
 
-            "phone": phone.strip(),
+            "phone": phone,
 
-            "date_of_birth":
-                date_of_birth.isoformat(),
+            "date_of_birth": (
+                date_of_birth.isoformat()
+            ),
 
-            "medical_history":
+            "medical_history": (
                 medical_history.strip()
+            )
         }
 
         # ==================================================
@@ -932,13 +1449,37 @@ font-weight: 500;
             )
         )
 
+        # ==================================================
+        # ERROR
+        # ==================================================
+
         if error:
 
-            st.error(
-                f"Unable to update patient:\n\n{error}"
-            )
+            error_text = str(error).lower()
+
+            if (
+                "duplicate" in error_text
+                or "unique" in error_text
+                or "profiles_email_key" in error_text
+                or "email" in error_text
+            ):
+
+                st.error(
+                    "This email address is already taken. "
+                    "Please enter a different email address."
+                )
+
+            else:
+
+                st.error(
+                    f"Unable to update patient:\n\n{error}"
+                )
 
             return
+
+        # ==================================================
+        # SUCCESS
+        # ==================================================
 
         full_name = (
             f"{first_name.strip()} "
@@ -959,7 +1500,10 @@ font-weight: 500;
     # ======================================================
 
     @st.dialog("Delete Patient")
-    def delete_patient_modal(self, patient):
+    def delete_patient_modal(
+        self,
+        patient
+    ):
 
         profile = (
             patient.get("profiles")
@@ -970,6 +1514,10 @@ font-weight: 500;
             f"{profile.get('first_name', '')} "
             f"{profile.get('last_name', '')}"
         ).strip()
+
+        # ==================================================
+        # CONFIRMATION
+        # ==================================================
 
         st.warning(
             f"Are you sure you want to delete "
@@ -1031,6 +1579,10 @@ font-weight: 500;
                     )
 
                     return
+
+                # ==========================================
+                # SUCCESS NOTIFICATION
+                # ==========================================
 
                 st.session_state[
                     "patient_notification"

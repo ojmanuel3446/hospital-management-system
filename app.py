@@ -249,13 +249,38 @@ class HospitalApp:
             ]
 
         # ==================================================
-        # NAVIGATION
+        # NAVIGATION (button-style nav panel, no CSS)
         # ==================================================
 
-        selected_page = st.sidebar.radio(
-            "Navigation",
-            available_pages
-        )
+        if "selected_page" not in st.session_state:
+
+            st.session_state["selected_page"] = available_pages[0]
+
+        # Keep selection valid if role/available_pages changes
+        if st.session_state["selected_page"] not in available_pages:
+
+            st.session_state["selected_page"] = available_pages[0]
+
+        st.sidebar.write("**Navigation**")
+
+        for page_name in available_pages:
+
+            is_active = (
+                st.session_state["selected_page"] == page_name
+            )
+
+            if st.sidebar.button(
+                page_name,
+                key=f"nav_{page_name}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary"
+            ):
+
+                st.session_state["selected_page"] = page_name
+
+                st.rerun()
+
+        selected_page = st.session_state["selected_page"]
 
         # ==================================================
         # LOGOUT

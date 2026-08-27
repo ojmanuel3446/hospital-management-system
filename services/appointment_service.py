@@ -1,4 +1,5 @@
 from config.database import Database
+
 from models.appointment import Appointment
 
 
@@ -7,7 +8,36 @@ class AppointmentService:
     def __init__(self):
         self.supabase = Database().get_client()
 
+    # ==========================================================
+    # CHECK IF APPOINTMENT SLOT IS ALREADY TAKEN
+    # ==========================================================
+
+    def slot_exists(self, doctor_id, appointment_datetime):
+        try:
+            response = (
+                self.supabase
+                .table("appointments")
+                .select("appointment_id")
+                .eq("doctor_id", doctor_id)
+                .eq(
+                    "appointment_date",
+                    appointment_datetime.isoformat()
+                )
+                .execute()
+            )
+
+            if response.data:
+                return True, None
+
+            return False, None
+
+        except Exception as e:
+            return False, str(e)
+
+    # ==========================================================
     # CREATE
+    # ==========================================================
+
     def create(self, appointment: Appointment):
         try:
             response = (
@@ -25,7 +55,10 @@ class AppointmentService:
         except Exception as e:
             return None, str(e)
 
+    # ==========================================================
     # READ ALL
+    # ==========================================================
+
     def get_all(self):
         try:
             response = (
@@ -49,7 +82,10 @@ class AppointmentService:
                         )
                     )
                 """)
-                .order("appointment_date", desc=True)
+                .order(
+                    "appointment_date",
+                    desc=True
+                )
                 .execute()
             )
 
@@ -58,14 +94,20 @@ class AppointmentService:
         except Exception as e:
             return None, str(e)
 
+    # ==========================================================
     # READ BY ID
+    # ==========================================================
+
     def get_by_id(self, appointment_id):
         try:
             response = (
                 self.supabase
                 .table("appointments")
                 .select("*")
-                .eq("appointment_id", appointment_id)
+                .eq(
+                    "appointment_id",
+                    appointment_id
+                )
                 .execute()
             )
 
@@ -77,14 +119,20 @@ class AppointmentService:
         except Exception as e:
             return None, str(e)
 
+    # ==========================================================
     # UPDATE
+    # ==========================================================
+
     def update(self, appointment_id, data):
         try:
             response = (
                 self.supabase
                 .table("appointments")
                 .update(data)
-                .eq("appointment_id", appointment_id)
+                .eq(
+                    "appointment_id",
+                    appointment_id
+                )
                 .execute()
             )
 
@@ -96,13 +144,17 @@ class AppointmentService:
         except Exception as e:
             return None, str(e)
 
+    # ==========================================================
     # DELETE
+    # ==========================================================
+
     def delete(self, appointment_id):
         try:
             self.supabase.table(
                 "appointments"
             ).delete().eq(
-                "appointment_id", appointment_id
+                "appointment_id",
+                appointment_id
             ).execute()
 
             return True, None

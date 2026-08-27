@@ -4,6 +4,7 @@ import datetime
 from models.diagnosis import Diagnosis
 from services.diagnosis_service import DiagnosisService
 from services.appointment_service import AppointmentService
+from config.database import Database
 
 
 class DiagnosesPage:
@@ -11,6 +12,7 @@ class DiagnosesPage:
     def __init__(self):
         self.service = DiagnosisService()
         self.appointment_service = AppointmentService()
+        self.supabase = Database().get_client()
 
     # ======================================================
     # GET LOGGED-IN USER
@@ -19,10 +21,7 @@ class DiagnosesPage:
     def get_current_user(self):
         """
         Get the logged-in profile from Streamlit session state.
-
-        AuthService.login() returns the complete profile row.
         """
-
         user = st.session_state.get("user")
 
         if not user:
@@ -35,13 +34,89 @@ class DiagnosesPage:
     # ======================================================
 
     def get_role(self):
-
         user = self.get_current_user()
 
         if not user:
             return None
 
-        return (user.get("role") or "").lower()
+        role = (
+            st.session_state.get("role")
+            or user.get("role")
+            or ""
+        )
+
+        return str(role).lower().strip()
+
+    # ======================================================
+    # GET PROFILE ID
+    # ======================================================
+
+    def get_profile_id(self):
+        user = self.get_current_user()
+
+        if not user:
+            return None
+
+        return (
+            user.get("id")
+            or user.get("profile_id")
+        )
+
+    # ======================================================
+    # GET DOCTOR ID
+    # ======================================================
+
+    def get_doctor_id(self):
+        """
+        Get the doctor_id linked to the logged-in profile.
+
+        profiles.id
+             ↓
+        doctors.profile_id
+             ↓
+        doctors.doctor_id
+        """
+
+        profile_id = self.get_profile_id()
+
+        if not profile_id:
+            return None, "Doctor profile ID was not found."
+
+        try:
+            response = (
+                self.supabase
+                .table("doctors")
+                .select("doctor_id, profile_id")
+                .eq("profile_id", profile_id)
+                .limit(1)
+                .execute()
+            )
+
+            data = response.data or []
+
+            if not data:
+                return (
+                    None,
+                    (
+                        "No doctor record is linked to this account.\n\n"
+                        f"Profile ID: {profile_id}\n\n"
+                        "Please make sure that doctors.profile_id "
+                        "matches profiles.id."
+                    )
+                )
+
+            doctor_id = data[0].get("doctor_id")
+
+            if not doctor_id:
+                return (
+                    None,
+                    "Doctor record exists but doctor_id is missing."
+                )
+
+            return doctor_id, None
+
+        except Exception as e:
+            return None, str(e)
 
     # ======================================================
     # MAIN PAGE
@@ -73,7 +148,7 @@ class DiagnosesPage:
         # ADD BUTTON
         # ==================================================
 
-        # Patients CANNOT add diagnoses.
+        # Patients cannot add diagnoses.
         if role in ["admin", "doctor"]:
 
             if st.button(
@@ -142,27 +217,25 @@ class DiagnosesPage:
 
     def get_appointments(self):
 
-        appointments, error = (
-            self.appointment_service.get_all()
-        )
-
-        if error:
-            st.error(
-                f"Unable to load appointments:\n\n{error}"
-            )
-            return []
-
-        appointments = appointments or []
-
         role = self.get_role()
-        user = self.get_current_user()
 
         # ==================================================
         # ADMIN
         # ==================================================
 
         if role == "admin":
-            return appointments
+
+            appointments, error = (
+                self.appointment_service.get_all()
+            )
+
+            if error:
+                st.error(
+                    f"Unable to load appointments:\n\n{error}"
+                )
+                return []
+
+            return appointments or []
 
         # ==================================================
         # DOCTOR
@@ -170,36 +243,71 @@ class DiagnosesPage:
 
         if role == "doctor":
 
-            # Get doctor's profile ID
-            profile_id = user.get("id")
+            doctor_id, error = self.get_doctor_id()
 
-            # Find doctor's doctor_id
-            doctor_id = None
-
-            for appointment in appointments:
-
-                doctor = (
-                    appointment.get("doctors")
-                    or {}
+            if error:
+                st.error(
+                    "Unable to determine doctor account."
                 )
-
-                if doctor.get("profile_id") == profile_id:
-                    doctor_id = doctor.get(
-                        "doctor_id"
-                    )
-                    break
-
-            # If we could not determine doctor ID
-            if not doctor_id:
+                st.warning(error)
                 return []
 
-            # Only doctor's appointments
-            return [
-                appointment
-                for appointment in appointments
-                if appointment.get("doctor_id")
-                == doctor_id
-            ]
+            try:
+                response = (
+                    self.supabase
+                    .table("appointments")
+                    .select(
+                        """
+                        appointment_id,
+                        patient_id,
+                        doctor_id,
+                        appointment_date,
+                        status,
+                        reason_for_visit,
+
+                        patients (
+                            patient_id,
+                            profile_id,
+
+                            profiles (
+                                id,
+                                first_name,
+                                last_name
+                            )
+                        ),
+
+                        doctors (
+                            doctor_id,
+                            profile_id,
+
+                            profiles (
+                                id,
+                                first_name,
+                                last_name
+                            )
+                        )
+                        """
+                    )
+                    .eq(
+                        "doctor_id",
+                        doctor_id
+                    )
+                    .order(
+                        "appointment_date",
+                        desc=False
+                    )
+                    .execute()
+                )
+
+                return response.data or []
+
+            except Exception as e:
+
+                st.error(
+                    f"Unable to load doctor's appointments:\n\n{e}"
+                )
+
+                return []
 
         # ==================================================
         # PATIENT
@@ -207,32 +315,94 @@ class DiagnosesPage:
 
         if role == "patient":
 
-            profile_id = user.get("id")
+            profile_id = self.get_profile_id()
 
-            patient_id = None
-
-            for appointment in appointments:
-
-                patient = (
-                    appointment.get("patients")
-                    or {}
-                )
-
-                if patient.get("profile_id") == profile_id:
-                    patient_id = patient.get(
-                        "patient_id"
-                    )
-                    break
-
-            if not patient_id:
+            if not profile_id:
                 return []
 
-            return [
-                appointment
-                for appointment in appointments
-                if appointment.get("patient_id")
-                == patient_id
-            ]
+            try:
+
+                # Find patient ID from profile ID
+                patient_response = (
+                    self.supabase
+                    .table("patients")
+                    .select("patient_id")
+                    .eq(
+                        "profile_id",
+                        profile_id
+                    )
+                    .limit(1)
+                    .execute()
+                )
+
+                patient_data = (
+                    patient_response.data or []
+                )
+
+                if not patient_data:
+                    return []
+
+                patient_id = (
+                    patient_data[0]
+                    .get("patient_id")
+                )
+
+                # Get patient's appointments
+                response = (
+                    self.supabase
+                    .table("appointments")
+                    .select(
+                        """
+                        appointment_id,
+                        patient_id,
+                        doctor_id,
+                        appointment_date,
+                        status,
+                        reason_for_visit,
+
+                        patients (
+                            patient_id,
+                            profile_id,
+
+                            profiles (
+                                id,
+                                first_name,
+                                last_name
+                            )
+                        ),
+
+                        doctors (
+                            doctor_id,
+                            profile_id,
+
+                            profiles (
+                                id,
+                                first_name,
+                                last_name
+                            )
+                        )
+                        """
+                    )
+                    .eq(
+                        "patient_id",
+                        patient_id
+                    )
+                    .order(
+                        "appointment_date",
+                        desc=False
+                    )
+                    .execute()
+                )
+
+                return response.data or []
+
+            except Exception as e:
+
+                st.error(
+                    f"Unable to load patient appointments:\n\n{e}"
+                )
+
+                return []
 
         return []
 
@@ -262,9 +432,14 @@ class DiagnosesPage:
             ""
         )
 
-        return (
+        name = (
             f"{first_name} {last_name}"
         ).strip()
+
+        if name:
+            return name
+
+        return "Unknown Patient"
 
     # ======================================================
     # DOCTOR NAME
@@ -326,7 +501,7 @@ class DiagnosesPage:
             or "N/A"
         )
 
-        if appointment_date:
+        if appointment_date != "N/A":
 
             try:
 
@@ -352,7 +527,7 @@ class DiagnosesPage:
                 pass
 
         return (
-            f"{patient_name or 'Unknown Patient'} "
+            f"{patient_name} "
             f"— {doctor_name} "
             f"— {appointment_date}"
         )
@@ -368,9 +543,11 @@ class DiagnosesPage:
 
         # Patients should never reach this modal.
         if role == "patient":
+
             st.error(
                 "Patients cannot create diagnoses."
             )
+
             return
 
         st.subheader(
@@ -490,17 +667,14 @@ class DiagnosesPage:
         # ==================================================
 
         diagnosis = Diagnosis(
-
             appointment_id=(
                 selected_appointment[
                     "appointment_id"
                 ]
             ),
-
             diagnosis_description=(
                 diagnosis_description.strip()
             ),
-
             treatment_plan=(
                 treatment_plan.strip()
             )
@@ -561,13 +735,14 @@ class DiagnosesPage:
         user = self.get_current_user()
 
         if not user:
+
             st.error(
                 "User session not found."
             )
+
             return
 
         # ==================================================
-        # IMPORTANT:
         # GET FILTERED DIAGNOSES
         # ==================================================
 
@@ -608,9 +783,9 @@ class DiagnosesPage:
                 or {}
             )
 
-            # ----------------------------------------------
+            # ==================================================
             # PATIENT
-            # ----------------------------------------------
+            # ==================================================
 
             patient_name = (
                 self.get_patient_name(
@@ -618,9 +793,9 @@ class DiagnosesPage:
                 )
             )
 
-            # ----------------------------------------------
+            # ==================================================
             # DOCTOR
-            # ----------------------------------------------
+            # ==================================================
 
             doctor_name = (
                 self.get_doctor_name(
@@ -628,9 +803,9 @@ class DiagnosesPage:
                 )
             )
 
-            # ----------------------------------------------
+            # ==================================================
             # DATE
-            # ----------------------------------------------
+            # ==================================================
 
             appointment_date = (
                 appointment.get(
@@ -639,9 +814,7 @@ class DiagnosesPage:
                 or "N/A"
             )
 
-            formatted_date = (
-                appointment_date
-            )
+            formatted_date = appointment_date
 
             if appointment_date != "N/A":
 
@@ -679,7 +852,7 @@ class DiagnosesPage:
             with col1:
 
                 st.subheader(
-                    f"{patient_name or 'Unknown Patient'}"
+                    patient_name
                 )
 
                 st.write(
@@ -719,9 +892,9 @@ class DiagnosesPage:
                 # Patients CANNOT edit/delete.
                 if role in ["admin", "doctor"]:
 
-                    # ------------------------------------------
+                    # ==========================================
                     # EDIT
-                    # ------------------------------------------
+                    # ==========================================
 
                     if st.button(
                         "Edit",
@@ -736,9 +909,9 @@ class DiagnosesPage:
                             diagnosis
                         )
 
-                    # ------------------------------------------
+                    # ==========================================
                     # DELETE
-                    # ------------------------------------------
+                    # ==========================================
 
                     if st.button(
                         "Delete",
@@ -922,7 +1095,7 @@ class DiagnosesPage:
         )
 
         # ==================================================
-        # UPDATE
+        # UPDATE DATA
         # ==================================================
 
         data = {
@@ -941,6 +1114,10 @@ class DiagnosesPage:
                 treatment_plan.strip()
             )
         }
+
+        # ==================================================
+        # UPDATE
+        # ==================================================
 
         result, error = (
             self.service.update(

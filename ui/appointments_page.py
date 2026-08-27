@@ -1,7 +1,10 @@
 import streamlit as st
-from datetime import datetime
+
+from datetime import datetime, date, time
 
 from models.appointment import Appointment
+from models.diagnosis import Diagnosis
+
 from services.appointment_service import AppointmentService
 from services.patient_service import PatientService
 from services.doctor_service import DoctorService
@@ -15,7 +18,6 @@ class AppointmentsPage:
         self.patient_service = PatientService()
         self.doctor_service = DoctorService()
         self.diagnosis_service = DiagnosisService()
-
         self.supabase = self.appointment_service.supabase
 
     # ==========================================================
@@ -24,7 +26,10 @@ class AppointmentsPage:
 
     def show(self):
 
-        role = st.session_state.get("role", "").lower()
+        role = st.session_state.get(
+            "role",
+            ""
+        ).lower()
 
         st.title("Appointments")
 
@@ -46,7 +51,7 @@ class AppointmentsPage:
             st.divider()
 
         # ------------------------------------------------------
-        # SHOW ONLY AUTHORIZED APPOINTMENTS
+        # SHOW AUTHORIZED APPOINTMENTS
         # ------------------------------------------------------
 
         self.show_appointments()
@@ -61,10 +66,10 @@ class AppointmentsPage:
         st.markdown(
             f"""
             <div style="
-                text-align:center;
-                padding:20px 10px;
-                font-size:20px;
-                font-weight:500;
+                text-align: center;
+                padding: 20px 10px;
+                font-size: 20px;
+                font-weight: 500;
             ">
                 {message}
             </div>
@@ -80,7 +85,11 @@ class AppointmentsPage:
             use_container_width=True,
             key="appointment_notification_ok"
         ):
-            st.session_state["appointment_notification"] = None
+
+            st.session_state[
+                "appointment_notification"
+            ] = None
+
             st.rerun()
 
     def show_notification(self):
@@ -93,13 +102,125 @@ class AppointmentsPage:
             self.notification_modal(message)
 
     # ==========================================================
+    # DATETIME HELPERS
+    # ==========================================================
+
+    def get_time_options(self):
+
+        time_options = []
+
+        for hour in range(0, 24):
+
+            for minute in (0, 30):
+
+                time_options.append(
+                    time(
+                        hour,
+                        minute
+                    )
+                )
+
+        return time_options
+
+    def parse_appointment_datetime(self, value):
+
+        if not value:
+            return None
+
+        try:
+
+            if isinstance(value, datetime):
+                return value
+
+            value = str(value)
+
+            # Handle Z timezone
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+
+            return datetime.fromisoformat(value)
+
+        except Exception:
+            return None
+
+    def format_appointment_datetime(self, value):
+
+        dt = self.parse_appointment_datetime(value)
+
+        if not dt:
+            return str(value or "N/A")
+
+        return dt.strftime(
+            "%B %d, %Y at %I:%M %p"
+        )
+
+    # ==========================================================
+    # CHECK DOCTOR SLOT
+    # ==========================================================
+
+    def doctor_slot_exists(
+        self,
+        doctor_id,
+        appointment_datetime,
+        exclude_appointment_id=None
+    ):
+
+        try:
+
+            response = (
+                self.supabase
+                .table("appointments")
+                .select(
+                    "appointment_id, appointment_date"
+                )
+                .eq(
+                    "doctor_id",
+                    doctor_id
+                )
+                .eq(
+                    "appointment_date",
+                    appointment_datetime.isoformat()
+                )
+                .execute()
+            )
+
+            for appointment in response.data or []:
+
+                existing_id = appointment.get(
+                    "appointment_id"
+                )
+
+                # Ignore current appointment during editing
+                if (
+                    exclude_appointment_id
+                    and str(existing_id)
+                    == str(exclude_appointment_id)
+                ):
+                    continue
+
+                return True, None
+
+            return False, None
+
+        except Exception as e:
+
+            return False, str(e)
+
+    # ==========================================================
     # GET CURRENT USER'S DATABASE ID
     # ==========================================================
 
     def get_current_role_record(self):
 
-        role = st.session_state.get("role", "").lower()
-        user = st.session_state.get("user", {})
+        role = st.session_state.get(
+            "role",
+            ""
+        ).lower()
+
+        user = st.session_state.get(
+            "user",
+            {}
+        )
 
         profile_id = (
             user.get("profile_id")
@@ -115,17 +236,30 @@ class AppointmentsPage:
 
         if role == "doctor":
 
-            response = (
-                self.supabase
-                .table("doctors")
-                .select("doctor_id")
-                .eq("profile_id", profile_id)
-                .single()
-                .execute()
-            )
+            try:
 
-            if response.data:
-                return "doctor", response.data["doctor_id"]
+                response = (
+                    self.supabase
+                    .table("doctors")
+                    .select("doctor_id")
+                    .eq(
+                        "profile_id",
+                        profile_id
+                    )
+                    .single()
+                    .execute()
+                )
+
+                if response.data:
+
+                    return (
+                        "doctor",
+                        response.data["doctor_id"]
+                    )
+
+            except Exception:
+
+                return "doctor", None
 
         # ------------------------------------------------------
         # PATIENT
@@ -133,17 +267,30 @@ class AppointmentsPage:
 
         if role == "patient":
 
-            response = (
-                self.supabase
-                .table("patients")
-                .select("patient_id")
-                .eq("profile_id", profile_id)
-                .single()
-                .execute()
-            )
+            try:
 
-            if response.data:
-                return "patient", response.data["patient_id"]
+                response = (
+                    self.supabase
+                    .table("patients")
+                    .select("patient_id")
+                    .eq(
+                        "profile_id",
+                        profile_id
+                    )
+                    .single()
+                    .execute()
+                )
+
+                if response.data:
+
+                    return (
+                        "patient",
+                        response.data["patient_id"]
+                    )
+
+            except Exception:
+
+                return "patient", None
 
         return role, None
 
@@ -153,7 +300,9 @@ class AppointmentsPage:
 
     def get_authorized_appointments(self):
 
-        role, record_id = self.get_current_role_record()
+        role, record_id = (
+            self.get_current_role_record()
+        )
 
         try:
 
@@ -196,7 +345,10 @@ class AppointmentsPage:
 
                 response = (
                     query
-                    .order("appointment_date", desc=True)
+                    .order(
+                        "appointment_date",
+                        desc=True
+                    )
                     .execute()
                 )
 
@@ -211,8 +363,14 @@ class AppointmentsPage:
 
                 response = (
                     query
-                    .eq("doctor_id", record_id)
-                    .order("appointment_date", desc=True)
+                    .eq(
+                        "doctor_id",
+                        record_id
+                    )
+                    .order(
+                        "appointment_date",
+                        desc=True
+                    )
                     .execute()
                 )
 
@@ -227,12 +385,19 @@ class AppointmentsPage:
 
                 response = (
                     query
-                    .eq("patient_id", record_id)
-                    .order("appointment_date", desc=True)
+                    .eq(
+                        "patient_id",
+                        record_id
+                    )
+                    .order(
+                        "appointment_date",
+                        desc=True
+                    )
                     .execute()
                 )
 
             else:
+
                 return None, "Invalid user role."
 
             return response.data, None
@@ -273,13 +438,14 @@ class AppointmentsPage:
         ).lower()
 
         # ------------------------------------------------------
-        # HEADER
+        # INFORMATION
         # ------------------------------------------------------
 
         if role == "doctor":
 
             st.info(
-                "You are viewing only your appointments."
+                "You are viewing only your appointments. "
+                "You can update the status of your appointments."
             )
 
         elif role == "patient":
@@ -330,25 +496,24 @@ class AppointmentsPage:
             if not doctor_name:
                 doctor_name = "Unknown Doctor"
 
-            appointment_date = (
-                appointment.get(
-                    "appointment_date",
-                    "N/A"
+            appointment_date = appointment.get(
+                "appointment_date"
+            )
+
+            formatted_datetime = (
+                self.format_appointment_datetime(
+                    appointment_date
                 )
             )
 
-            status = (
-                appointment.get(
-                    "status",
-                    "N/A"
-                )
+            status = appointment.get(
+                "status",
+                "N/A"
             )
 
-            reason = (
-                appointment.get(
-                    "reason_for_visit",
-                    "N/A"
-                )
+            reason = appointment.get(
+                "reason_for_visit",
+                "N/A"
             )
 
             # --------------------------------------------------
@@ -368,7 +533,7 @@ class AppointmentsPage:
                 else:
 
                     st.subheader(
-                        f"{patient_name}"
+                        patient_name
                     )
 
                 st.write(
@@ -380,16 +545,21 @@ class AppointmentsPage:
                 )
 
                 st.write(
-                    f"**Appointment:** {appointment_date}"
+                    f"**Appointment:** {formatted_datetime}"
                 )
 
                 st.write(
-                    f"**Status:** {str(status).capitalize()}"
+                    f"**Status:** "
+                    f"{str(status).capitalize()}"
                 )
 
                 st.write(
                     f"**Reason:** {reason}"
                 )
+
+            # --------------------------------------------------
+            # ACTION BUTTONS
+            # --------------------------------------------------
 
             with col2:
 
@@ -413,7 +583,7 @@ class AppointmentsPage:
                     )
 
                 # ----------------------------------------------
-                # ADMIN ONLY EDIT
+                # ADMIN EDIT / DELETE
                 # ----------------------------------------------
 
                 if role == "admin":
@@ -532,34 +702,146 @@ class AppointmentsPage:
                 f"**Patient:** {patient_name}"
             )
 
+            appointment_datetime = (
+                self.format_appointment_datetime(
+                    appointment.get("appointment_date")
+                )
+            )
+
             st.write(
-                f"**Date:** "
-                f"{appointment.get('appointment_date', 'N/A')}"
+                f"**Date & Time:** {appointment_datetime}"
             )
 
         with col2:
 
+            appointment_status = str(
+                appointment.get(
+                    "status",
+                    "N/A"
+                )
+            ).capitalize()
+
             st.write(
-                f"**Status:** "
-                f"{str(appointment.get('status', 'N/A')).capitalize()}"
+                f"**Status:** {appointment_status}"
+            )
+
+            reason = appointment.get(
+                "reason_for_visit",
+                "N/A"
             )
 
             st.write(
-                f"**Reason:** "
-                f"{appointment.get('reason_for_visit', 'N/A')}"
+                f"**Reason:** {reason}"
             )
 
         st.divider()
 
-        # ------------------------------------------------------
-        # DIAGNOSES
-        # ------------------------------------------------------
+        # ======================================================
+        # DOCTOR CAN UPDATE APPOINTMENT STATUS
+        # ======================================================
 
-        st.subheader("Medical Record")
+        if role == "doctor":
+
+            st.subheader(
+                "Update Appointment Status"
+            )
+
+            statuses = [
+                "scheduled",
+                "completed",
+                "cancelled"
+            ]
+
+            current_status = appointment.get(
+                "status",
+                "scheduled"
+            )
+
+            if current_status not in statuses:
+                current_status = "scheduled"
+
+            current_status_index = (
+                statuses.index(current_status)
+            )
+
+            with st.form(
+                f"doctor_status_form_"
+                f"{appointment['appointment_id']}"
+            ):
+
+                new_status = st.selectbox(
+                    "Appointment Status",
+                    statuses,
+                    index=current_status_index,
+                    format_func=lambda status:
+                        status.capitalize()
+                )
+
+                status_submitted = (
+                    st.form_submit_button(
+                        "Update Status",
+                        type="primary",
+                        use_container_width=True
+                    )
+                )
+
+            if status_submitted:
+
+                # ----------------------------------------------
+                # UPDATE ONLY STATUS
+                # ----------------------------------------------
+
+                updated, error = (
+                    self.appointment_service.update(
+                        appointment[
+                            "appointment_id"
+                        ],
+                        {
+                            "status": new_status
+                        }
+                    )
+                )
+
+                if error:
+
+                    st.error(
+                        "Unable to update appointment "
+                        f"status:\n\n{error}"
+                    )
+
+                    return
+
+                # ----------------------------------------------
+                # SUCCESS
+                # ----------------------------------------------
+
+                st.session_state[
+                    "appointment_notification"
+                ] = (
+                    f"Appointment status for "
+                    f"<strong>{patient_name}</strong> "
+                    f"has been changed to "
+                    f"<strong>{new_status.capitalize()}</strong> "
+                    f"successfully."
+                )
+
+                st.rerun()
+
+            st.divider()
+
+        # ======================================================
+        # DIAGNOSES
+        # ======================================================
+
+        st.subheader(
+            "Medical Record"
+        )
 
         diagnoses, error = (
             self.get_diagnoses_for_appointment(
-                appointment["appointment_id"]
+                appointment[
+                    "appointment_id"
+                ]
             )
         )
 
@@ -573,25 +855,39 @@ class AppointmentsPage:
 
             for diagnosis in diagnoses:
 
+                diagnosis_description = (
+                    diagnosis.get(
+                        "diagnosis_description",
+                        "N/A"
+                    )
+                )
+
+                treatment_plan = (
+                    diagnosis.get(
+                        "treatment_plan",
+                        "N/A"
+                    )
+                )
+
+                recorded = (
+                    self.format_appointment_datetime(
+                        diagnosis.get("created_at")
+                    )
+                )
+
                 st.markdown(
                     f"""
                     **Diagnosis:**  
-                    {diagnosis.get(
-                        'diagnosis_description',
-                        'N/A'
-                    )}
+
+                    {diagnosis_description}
 
                     **Treatment Plan:**  
-                    {diagnosis.get(
-                        'treatment_plan',
-                        'N/A'
-                    )}
+
+                    {treatment_plan}
 
                     **Recorded:**  
-                    {diagnosis.get(
-                        'created_at',
-                        'N/A'
-                    )}
+
+                    {recorded}
                     """
                 )
 
@@ -603,13 +899,15 @@ class AppointmentsPage:
                 "No diagnosis has been recorded."
             )
 
-        # ------------------------------------------------------
+        # ======================================================
         # DOCTOR CAN ADD DIAGNOSIS
-        # ------------------------------------------------------
+        # ======================================================
 
         if role == "doctor":
 
-            st.subheader("Add Diagnosis")
+            st.subheader(
+                "Add Diagnosis"
+            )
 
             with st.form(
                 f"diagnosis_form_"
@@ -618,18 +916,24 @@ class AppointmentsPage:
 
                 diagnosis_description = st.text_area(
                     "Diagnosis",
-                    placeholder="Enter the patient's diagnosis..."
+                    placeholder=(
+                        "Enter the patient's diagnosis..."
+                    )
                 )
 
                 treatment_plan = st.text_area(
                     "Treatment Plan",
-                    placeholder="Enter the treatment plan..."
+                    placeholder=(
+                        "Enter the treatment plan..."
+                    )
                 )
 
-                submitted = st.form_submit_button(
-                    "Save Diagnosis",
-                    type="primary",
-                    use_container_width=True
+                submitted = (
+                    st.form_submit_button(
+                        "Save Diagnosis",
+                        type="primary",
+                        use_container_width=True
+                    )
                 )
 
             if submitted:
@@ -641,8 +945,6 @@ class AppointmentsPage:
                     )
 
                     return
-
-                from models.diagnosis import Diagnosis
 
                 diagnosis = Diagnosis(
                     appointment_id=(
@@ -723,9 +1025,17 @@ class AppointmentsPage:
             "Create New Appointment"
         )
 
+        # ------------------------------------------------------
+        # LOAD PATIENTS
+        # ------------------------------------------------------
+
         patients, patient_error = (
             self.patient_service.get_all()
         )
+
+        # ------------------------------------------------------
+        # LOAD DOCTORS
+        # ------------------------------------------------------
 
         doctors, doctor_error = (
             self.doctor_service.get_all()
@@ -734,7 +1044,8 @@ class AppointmentsPage:
         if patient_error:
 
             st.error(
-                f"Unable to load patients:\n\n{patient_error}"
+                f"Unable to load patients:\n\n"
+                f"{patient_error}"
             )
 
             return
@@ -742,7 +1053,8 @@ class AppointmentsPage:
         if doctor_error:
 
             st.error(
-                f"Unable to load doctors:\n\n{doctor_error}"
+                f"Unable to load doctors:\n\n"
+                f"{doctor_error}"
             )
 
             return
@@ -763,6 +1075,10 @@ class AppointmentsPage:
 
             return
 
+        # ------------------------------------------------------
+        # PATIENT OPTIONS
+        # ------------------------------------------------------
+
         patient_options = {}
 
         for patient in patients:
@@ -777,9 +1093,16 @@ class AppointmentsPage:
                 f"{profile.get('last_name', '')}"
             ).strip()
 
+            if not name:
+                name = "Unknown Patient"
+
             patient_options[name] = (
                 patient["patient_id"]
             )
+
+        # ------------------------------------------------------
+        # DOCTOR OPTIONS
+        # ------------------------------------------------------
 
         doctor_options = {}
 
@@ -795,8 +1118,11 @@ class AppointmentsPage:
                 f"{profile.get('last_name', '')}"
             ).strip()
 
-            specialization = (
-                doctor.get("specialization")
+            if not name:
+                name = "Unknown Doctor"
+
+            specialization = doctor.get(
+                "specialization"
             )
 
             if specialization:
@@ -810,28 +1136,56 @@ class AppointmentsPage:
                 doctor["doctor_id"]
             )
 
+        # ======================================================
+        # FORM
+        # ======================================================
+
         with st.form(
-            "appointment_add_form",
-            clear_on_submit=True
+            "appointment_add_form"
         ):
 
             patient_name = st.selectbox(
                 "Patient",
-                list(patient_options.keys())
+                list(
+                    patient_options.keys()
+                )
             )
 
             doctor_name = st.selectbox(
                 "Doctor",
-                list(doctor_options.keys())
+                list(
+                    doctor_options.keys()
+                )
             )
+
+            # --------------------------------------------------
+            # DATE
+            # --------------------------------------------------
 
             appointment_date = st.date_input(
-                "Appointment Date"
+                "Appointment Date",
+                min_value=date.today(),
+                value=date.today()
             )
 
-            appointment_time = st.time_input(
-                "Appointment Time"
+            # --------------------------------------------------
+            # TIME
+            # --------------------------------------------------
+
+            time_options = (
+                self.get_time_options()
             )
+
+            appointment_time = st.selectbox(
+                "Appointment Time",
+                time_options,
+                format_func=lambda t:
+                    t.strftime("%I:%M %p")
+            )
+
+            # --------------------------------------------------
+            # STATUS
+            # --------------------------------------------------
 
             status = st.selectbox(
                 "Status",
@@ -841,6 +1195,10 @@ class AppointmentsPage:
                     "cancelled"
                 ]
             )
+
+            # --------------------------------------------------
+            # REASON
+            # --------------------------------------------------
 
             reason = st.text_area(
                 "Reason for Visit"
@@ -852,8 +1210,16 @@ class AppointmentsPage:
                 use_container_width=True
             )
 
+        # ======================================================
+        # NOT SUBMITTED
+        # ======================================================
+
         if not submitted:
             return
+
+        # ======================================================
+        # REASON VALIDATION
+        # ======================================================
 
         if not reason.strip():
 
@@ -863,22 +1229,104 @@ class AppointmentsPage:
 
             return
 
+        # ======================================================
+        # DATE VALIDATION
+        # ======================================================
+
+        today = date.today()
+
+        if appointment_date < today:
+
+            st.error(
+                "Appointment date cannot be in the past."
+            )
+
+            return
+
+        # ======================================================
+        # COMBINE DATE + TIME
+        # ======================================================
+
         appointment_datetime = datetime.combine(
             appointment_date,
             appointment_time
         )
 
-        appointment = Appointment(
-            patient_id=patient_options[
-                patient_name
-            ],
-            doctor_id=doctor_options[
-                doctor_name
-            ],
-            appointment_date=appointment_datetime,
-            status=status,
-            reason_for_visit=reason.strip()
+        # ======================================================
+        # TODAY TIME VALIDATION
+        # ======================================================
+
+        if (
+            appointment_date == today
+            and appointment_datetime <= datetime.now()
+        ):
+
+            st.error(
+                "Appointment time must be in the future."
+            )
+
+            return
+
+        # ======================================================
+        # DOCTOR SLOT CHECK
+        # ======================================================
+
+        selected_doctor_id = (
+            doctor_options[doctor_name]
         )
+
+        slot_taken, slot_error = (
+            self.doctor_slot_exists(
+                selected_doctor_id,
+                appointment_datetime
+            )
+        )
+
+        if slot_error:
+
+            st.error(
+                "Unable to check appointment availability:\n\n"
+                f"{slot_error}"
+            )
+
+            return
+
+        # ======================================================
+        # DUPLICATE
+        # ======================================================
+
+        if slot_taken:
+
+            st.error(
+                "This appointment slot is already taken "
+                "for this doctor. Please select another time."
+            )
+
+            return
+
+        # ======================================================
+        # CREATE APPOINTMENT
+        # ======================================================
+
+        appointment = Appointment(
+            patient_id=(
+                patient_options[patient_name]
+            ),
+            doctor_id=(
+                doctor_options[doctor_name]
+            ),
+            appointment_date=(
+                appointment_datetime
+            ),
+            status=status,
+            reason_for_visit=(
+                reason.strip()
+            )
+        )
+
+        # ======================================================
+        # DATABASE
+        # ======================================================
 
         created, error = (
             self.appointment_service.create(
@@ -893,6 +1341,10 @@ class AppointmentsPage:
             )
 
             return
+
+        # ======================================================
+        # SUCCESS
+        # ======================================================
 
         st.session_state[
             "appointment_notification"
@@ -914,34 +1366,198 @@ class AppointmentsPage:
         appointment
     ):
 
+        appointment_id = (
+            appointment["appointment_id"]
+        )
+
+        # ------------------------------------------------------
+        # CURRENT DATE/TIME
+        # ------------------------------------------------------
+
+        current_datetime = (
+            self.parse_appointment_datetime(
+                appointment.get(
+                    "appointment_date"
+                )
+            )
+        )
+
+        if current_datetime:
+
+            current_date = (
+                current_datetime.date()
+            )
+
+            current_time = (
+                current_datetime.time()
+            )
+
+            # Normalize seconds/microseconds
+
+            current_time = time(
+                current_time.hour,
+                current_time.minute
+            )
+
+        else:
+
+            current_date = date.today()
+            current_time = time(8, 0)
+
+        # ------------------------------------------------------
+        # TIME OPTIONS
+        # ------------------------------------------------------
+
+        time_options = (
+            self.get_time_options()
+        )
+
+        if current_time not in time_options:
+
+            current_time = time(
+                current_time.hour,
+                30 if current_time.minute >= 30 else 0
+            )
+
+        # ------------------------------------------------------
+        # STATUS
+        # ------------------------------------------------------
+
+        statuses = [
+            "scheduled",
+            "completed",
+            "cancelled"
+        ]
+
+        current_status = (
+            appointment.get("status")
+        )
+
+        status_index = (
+            statuses.index(current_status)
+            if current_status in statuses
+            else 0
+        )
+
+        # ======================================================
+        # PATIENT / DOCTOR
+        # ======================================================
+
+        patient = (
+            appointment.get("patients")
+            or {}
+        )
+
+        patient_profile = (
+            patient.get("profiles")
+            or {}
+        )
+
+        patient_name = (
+            f"{patient_profile.get('first_name', '')} "
+            f"{patient_profile.get('last_name', '')}"
+        ).strip()
+
+        doctor = (
+            appointment.get("doctors")
+            or {}
+        )
+
+        doctor_profile = (
+            doctor.get("profiles")
+            or {}
+        )
+
+        doctor_name = (
+            f"{doctor_profile.get('first_name', '')} "
+            f"{doctor_profile.get('last_name', '')}"
+        ).strip()
+
+        if not patient_name:
+            patient_name = "Unknown Patient"
+
+        if not doctor_name:
+            doctor_name = "Unknown Doctor"
+
+        # ======================================================
+        # FORM
+        # ======================================================
+
         with st.form(
-            f"edit_appointment_form_"
-            f"{appointment['appointment_id']}"
+            f"edit_appointment_form_{appointment_id}"
         ):
 
-            statuses = [
-                "scheduled",
-                "completed",
-                "cancelled"
-            ]
+            st.subheader(
+                "Appointment Information"
+            )
 
-            current_status = (
-                appointment.get(
-                    "status"
+            # --------------------------------------------------
+            # CURRENT PATIENT / DOCTOR
+            # --------------------------------------------------
+
+            st.write(
+                f"**Patient:** {patient_name}"
+            )
+
+            st.write(
+                f"**Doctor:** {doctor_name}"
+            )
+
+            st.divider()
+
+            # --------------------------------------------------
+            # DATE
+            # --------------------------------------------------
+
+            today = date.today()
+
+            # Allow existing past date to display
+
+            edit_min_date = min(
+                current_date,
+                today
+            )
+
+            appointment_date = st.date_input(
+                "Appointment Date",
+                value=current_date,
+                min_value=edit_min_date,
+                key=f"edit_date_{appointment_id}"
+            )
+
+            # --------------------------------------------------
+            # TIME
+            # --------------------------------------------------
+
+            current_time_index = (
+                time_options.index(
+                    current_time
                 )
             )
 
-            status_index = (
-                statuses.index(current_status)
-                if current_status in statuses
-                else 0
+            appointment_time = st.selectbox(
+                "Appointment Time",
+                time_options,
+                index=current_time_index,
+                format_func=lambda t:
+                    t.strftime("%I:%M %p"),
+                key=f"edit_time_{appointment_id}"
             )
+
+            # --------------------------------------------------
+            # STATUS
+            # --------------------------------------------------
 
             status = st.selectbox(
                 "Status",
                 statuses,
-                index=status_index
+                index=status_index,
+                key=f"edit_status_{appointment_id}"
             )
+
+            # --------------------------------------------------
+            # REASON
+            # --------------------------------------------------
 
             reason = st.text_area(
                 "Reason for Visit",
@@ -950,7 +1566,8 @@ class AppointmentsPage:
                         "reason_for_visit",
                         ""
                     ) or ""
-                )
+                ),
+                key=f"edit_reason_{appointment_id}"
             )
 
             submitted = st.form_submit_button(
@@ -959,8 +1576,16 @@ class AppointmentsPage:
                 use_container_width=True
             )
 
+        # ======================================================
+        # NOT SUBMITTED
+        # ======================================================
+
         if not submitted:
             return
+
+        # ======================================================
+        # REASON VALIDATION
+        # ======================================================
 
         if not reason.strip():
 
@@ -970,14 +1595,109 @@ class AppointmentsPage:
 
             return
 
+        # ======================================================
+        # DATE VALIDATION
+        # ======================================================
+
+        today = date.today()
+
+        if appointment_date < today:
+
+            st.error(
+                "Appointment date cannot be in the past."
+            )
+
+            return
+
+        # ======================================================
+        # COMBINE DATE + TIME
+        # ======================================================
+
+        new_datetime = datetime.combine(
+            appointment_date,
+            appointment_time
+        )
+
+        # ======================================================
+        # TODAY TIME VALIDATION
+        # ======================================================
+
+        if (
+            appointment_date == today
+            and new_datetime <= datetime.now()
+        ):
+
+            st.error(
+                "Appointment time must be in the future."
+            )
+
+            return
+
+        # ======================================================
+        # GET DOCTOR ID
+        # ======================================================
+
+        doctor_id = doctor.get(
+            "doctor_id"
+        )
+
+        if not doctor_id:
+
+            st.error(
+                "Unable to identify the doctor "
+                "for this appointment."
+            )
+
+            return
+
+        # ======================================================
+        # DUPLICATE DOCTOR SLOT CHECK
+        # ======================================================
+
+        slot_taken, slot_error = (
+            self.doctor_slot_exists(
+                doctor_id,
+                new_datetime,
+                exclude_appointment_id=appointment_id
+            )
+        )
+
+        if slot_error:
+
+            st.error(
+                "Unable to check appointment availability:\n\n"
+                f"{slot_error}"
+            )
+
+            return
+
+        if slot_taken:
+
+            st.error(
+                "This appointment slot is already taken "
+                "for this doctor. Please select another date "
+                "or time."
+            )
+
+            return
+
+        # ======================================================
+        # UPDATE DATA
+        # ======================================================
+
         data = {
+            "appointment_date": new_datetime,
             "status": status,
             "reason_for_visit": reason.strip()
         }
 
+        # ======================================================
+        # UPDATE
+        # ======================================================
+
         updated, error = (
             self.appointment_service.update(
-                appointment["appointment_id"],
+                appointment_id,
                 data
             )
         )
@@ -990,10 +1710,15 @@ class AppointmentsPage:
 
             return
 
+        # ======================================================
+        # SUCCESS
+        # ======================================================
+
         st.session_state[
             "appointment_notification"
         ] = (
-            "Appointment has been updated successfully."
+            "Appointment date, time, and details "
+            "have been updated successfully."
         )
 
         st.rerun()
@@ -1016,40 +1741,65 @@ class AppointmentsPage:
             "This action cannot be undone."
         )
 
+        st.divider()
+
         col1, col2 = st.columns(2)
+
+        # ======================================================
+        # CANCEL
+        # ======================================================
 
         with col1:
 
             if st.button(
                 "Cancel",
+                key=(
+                    f"cancel_delete_"
+                    f"{appointment['appointment_id']}"
+                ),
                 use_container_width=True
             ):
 
                 st.rerun()
 
+        # ======================================================
+        # DELETE
+        # ======================================================
+
         with col2:
 
             if st.button(
                 "Delete Appointment",
+                key=(
+                    f"confirm_delete_"
+                    f"{appointment['appointment_id']}"
+                ),
                 type="primary",
                 use_container_width=True
             ):
 
                 success, error = (
                     self.appointment_service.delete(
-                        appointment[
-                            "appointment_id"
-                        ]
+                        appointment["appointment_id"]
                     )
                 )
+
+                # ------------------------------------------------
+                # ERROR
+                # ------------------------------------------------
 
                 if error:
 
                     st.error(
-                        f"Unable to delete appointment:\n\n{error}"
+                        f"Unable to delete appointment:\n\n"
+                        f"{error}"
                     )
 
                     return
+
+                # ------------------------------------------------
+                # SUCCESS
+                # ------------------------------------------------
 
                 st.session_state[
                     "appointment_notification"
