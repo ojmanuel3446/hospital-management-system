@@ -14,7 +14,7 @@ from services.auth import AuthService
 st.set_page_config(
     page_title="Hospital Management System",
     page_icon="🏥",
-    layout="wide"
+    layout="centered"
 )
 
 
